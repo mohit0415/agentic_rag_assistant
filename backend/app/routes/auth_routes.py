@@ -1,4 +1,3 @@
-"""Authentication routes: login (issue JWT) and token verification."""
 
 from typing import Optional
 
