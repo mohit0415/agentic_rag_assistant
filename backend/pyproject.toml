@@ -38,4 +38,15 @@ dependencies = [
     "openinference-instrumentation-llama-index==4.3.9",
     "ragas==0.4.3",
     "langchain-community==0.3.31",
+    "guardrails-grhub-detect-pii",
+    "guardrails-ai==0.10.2",
 ]
+
+[[tool.uv.index]]
+name = "guardrails"
+url = "https://pypi.guardrailsai.com/simple"
+explicit = true
+authenticate = "always"
+
+[tool.uv.sources]
+guardrails-grhub-detect-pii = { index = "guardrails" }
