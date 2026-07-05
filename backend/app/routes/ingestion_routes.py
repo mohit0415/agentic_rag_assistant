@@ -25,7 +25,6 @@ router = APIRouter()
 
 
 def get_app_state():
-    """Lazy import of app_state to avoid circular import"""
     from ..app import app_state
     return app_state
 
@@ -98,12 +97,6 @@ async def upload_document(
                 status_code=400,
                 detail=f"File size exceeds maximum allowed size of {MAX_FILE_SIZE / (1024*1024):.1f}MB"
             )
-
-        # ---- Duplicate-upload prevention (content-based) ----
-        # SHA-256 of the raw bytes identifies the *content*, not the filename:
-        # the same doc re-uploaded under a different name is still caught, while
-        # a genuinely modified version (different bytes) is allowed through.
-        # Checked BEFORE any parsing so duplicates cost no LlamaParse/LLM calls.
         file_hash = hashlib.sha256(content).hexdigest()
         if Indexing.file_hash_exists(file_hash):
             raise HTTPException(
@@ -114,10 +107,6 @@ async def upload_document(
 
         documents_load = Document_Process(data=content,file_ext=file_ext)
 
-
-        # Step 1: LlamaIndex load_docs — the cheap, first-choice path for every
-        # supported type (.pdf/.docx/.txt/.md). Tables/images are no longer
-        # rejected here; the routing decision happens in step 2.
         try:
             documents,file_path = documents_load.process_docs()
         except ValueError as e:
@@ -128,33 +117,13 @@ async def upload_document(
 
         logger.info(f"Loaded {len(documents)} document(s) from {safe_filename}")
 
-
-        # Resolve the per-user models from the verified JWT (Gemini mode) or the
-        # env-configured Azure models.
         llm, embed_model = build_models_from_claims(claims)
-
-        # ---- Embedding-model compatibility gate (BEFORE any parsing cost) ----
-        # Every chunk is stamped with the embed model that produced its vector
-        # (see the metadata loop below). If the table already holds chunks from
-        # a DIFFERENT embedding model (e.g. after flipping USE_GEMINI), refuse
-        # the upload: mixing vector spaces in one table silently breaks
-        # retrieval for everything.
         active_embed_name = get_active_embed_model_name()
         compatible, mismatch_msg = Indexing.check_embed_model_compatibility(active_embed_name)
         if not compatible:
             raise HTTPException(status_code=409, detail=mismatch_msg)
 
-
-
         chunk_obj = Chunking_Strategy(embed_model=embed_model)
-
-
-
-        # Step 2: cost-aware routing. The file is scanned for tables/images; only
-        # when present is it re-parsed with LlamaParse (markdown + image captions
-        # + table summaries). Plain-text documents keep the LlamaIndex result, so
-        # the LlamaParse cost is paid only when actually required. The LlamaParse
-        # key is read from the verified JWT claims.
 
         doc_service = MultiModal(file_path=file_path,file_ext=file_ext,standard_documents=documents,llamaparse_api_key = claims.get('llamaparse_api_key'),llm=llm,embed_model=embed_model,original_filename = safe_filename)
         use_Llama_Parse = doc_service.requires_multimodal_parsing()
@@ -184,15 +153,8 @@ async def upload_document(
             for doc in documents]
             nodes = chunk_obj.extract_nodes_from_docs(documents=documents_refine)
 
-        # Stamp every node (both LlamaIndex and LlamaParse paths) with the file
-        # content hash so future uploads of the same bytes are detected, and
-        # exclude it from embedding/LLM text so it never pollutes retrieval.
         for node in nodes:
             node.metadata['file_hash'] = file_hash
-            # Stamp WHICH embedding model produced this chunk's vector, so a
-            # later provider/model switch is detected at query time instead of
-            # silently comparing vectors from different spaces. Excluded from
-            # embed/LLM text (like file_hash) so it never pollutes retrieval.
             node.metadata['embed_model'] = active_embed_name
             for key in ('file_hash', 'embed_model'):
                 if key not in node.excluded_embed_metadata_keys:
@@ -202,14 +164,8 @@ async def upload_document(
 
         index_obj = Indexing(embed_model=embed_model)
         index = index_obj.load_or_create_index()
-        # The index instance is cached process-wide (see indexing.py's module
-        # level `_index`). In Gemini mode each request can carry a different
-        # user's embed model/key, so without this override insert_nodes() below
-        # would embed new nodes with whichever embed_model built the cached
-        # index first, not this request's. Mirrors the same override already
-        # applied in query_routes.py before retrieval.
+
         index._embed_model = embed_model
-        # ------------------------------------------------
         try:
             vectorStoreIndex =VectorDB(current_index=index,nodes=nodes)
 
@@ -221,7 +177,6 @@ async def upload_document(
                 llama_parse = "LlamaIndex"
 
         except NodeInsertionError as nie:
-            # Log full details for operators, but return a concise, non-sensitive message to clients
             logger.error("Indexing error while uploading document %s: %s", safe_filename, nie, exc_info=True)
             raise HTTPException(
                 status_code=500,
@@ -248,16 +203,12 @@ async def upload_document(
             detail=str(e)
         )
     except ConnectionError as e:
-        # e.g. Indexing.load_or_create_index() -> "DB connection failed: ..."
         logger.error(f"Connection error while uploading document: {e}", exc_info=True)
         raise HTTPException(
             status_code=503,
             detail=f"Service unavailable: {str(e)}"
         )
     except Exception as e:
-        # Surface the ORIGINAL error (type + message) to the client instead of
-        # a generic "Failed to process document", so upload failures are
-        # diagnosable from the UI without reading server logs.
         logger.error(f"Error uploading document: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
