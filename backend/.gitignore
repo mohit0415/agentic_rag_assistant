@@ -1,1 +1,74 @@
+# Virtual Environment
+.venv/
+venv/
+env/
+ENV/
+
+# Environment Variables
 .env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / Packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Test / Coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.mypy_cache/
+.pyre/
+.ruff_cache/
+
+# Logs
+*.log
+logs/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Type Checker
+.dmypy.json
+dmypy.json
+
+# PyInstaller
+*.manifest
+*.spec
+
+# SQLite Database (if local)
+*.db
+*.sqlite3
+
+# FastAPI/Uvicorn
+uvicorn.log
+
+# Generated files
+*.pid
+*.tmp
+*.bak
+
+# Langfuse / OpenTelemetry (optional)
+*.trace

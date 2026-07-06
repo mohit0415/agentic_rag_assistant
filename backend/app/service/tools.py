@@ -29,11 +29,23 @@ def get_app_state():
 
 
 class KeepTopN(BaseNodePostprocessor):
+
     top_n: int = 5
+    max_media: int = 5
 
     @classmethod
     def class_name(cls) -> str:
         return "KeepTopN"
+
+    @staticmethod
+    def _is_media(nws: NodeWithScore) -> bool:
+        node = getattr(nws, "node", nws)
+        meta = getattr(node, "metadata", {}) or {}
+        return (
+            meta.get("content_type") in ("image_caption", "table_summary")
+            or bool(meta.get("image_path"))
+            or bool(meta.get("original_table"))
+        )
 
     def _postprocess_nodes(
         self,
@@ -42,10 +54,17 @@ class KeepTopN(BaseNodePostprocessor):
     ) -> List[NodeWithScore]:
         if not nodes:
             return nodes
-        return nodes[: self.top_n]
+        kept = nodes[: self.top_n]
+        kept_ids = {id(n) for n in kept}
+        media_tail = [
+            n for n in nodes[self.top_n:]
+            if self._is_media(n) and id(n) not in kept_ids
+        ][: self.max_media]
+        return kept + media_tail
 
 
 class SafeLLMRerank(BaseNodePostprocessor):
+
     inner: Any = None
     fallback_top_n: int = 5
 
@@ -134,7 +153,6 @@ class Tools:
                     type="str",
                     description="Name of the user who uploaded the document",
                 ),
-                # --- richer medical-education metadata keys (added at ingestion) ---
                 MetadataInfo(
                     name="source_type",
                     type="str",
@@ -190,9 +208,9 @@ class Tools:
                 ),
             ],
         )
+
         top_k = int(os.getenv("RETRIEVAL_TOP_K", "15"))
         rerank_top_n = int(os.getenv("RERANK_TOP_N", "5"))
-
         plain_retriever = self.index.as_retriever(similarity_top_k=top_k)
 
         from llama_index.core.retrievers import BaseRetriever
@@ -261,7 +279,6 @@ class Tools:
                 "No nodes found in docstore; policy_documents tool is falling "
                 "back to vector-only retrieval (BM25 skipped)."
             )
-
         node_postprocessors = []
 
         try:
@@ -308,6 +325,10 @@ class Tools:
                 f"KeepTopN enabled (retrieve {top_k} -> keep {rerank_top_n}, "
                 f"deterministic, no LLM call, cannot break grounding)"
             )
+
+        # CitationQueryEngine works over any BaseRetriever, so citations behave
+        # exactly as before whether we're on the fused retriever or the plain
+        # vector retriever fallback above.
         query_engine = CitationQueryEngine(
             retriever=retriever,
             llm=self.llm,
@@ -345,6 +366,7 @@ class Tools:
         guard = get_guardrails_validator()
 
         def guarded_sql_query(query: str) -> str:
+
             is_valid, error_message = guard.validate_query_intent(query)
             if not is_valid:
                 logger.warning(f"Blocked clinical_reference_db tool call (regex): {error_message} | query={query!r}")
@@ -425,7 +447,6 @@ class Tools:
                 ]
             )
             med_tools = [self._clamp_mcp_tool(t) for t in med_tools]
-
             return med_tools
         except Exception as e:
             logger.error(f"Failed to load MCP tools: {e}", exc_info=True)

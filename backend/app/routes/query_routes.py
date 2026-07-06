@@ -24,6 +24,7 @@ from ragas.metrics.collections import Faithfulness, AnswerRelevancy
 
 
 router = APIRouter()
+
 AGENT_RUN_TIMEOUT_SECONDS = int(os.getenv("AGENT_RUN_TIMEOUT_SECONDS", "300"))
 
 GUARDED_TOOLS = {"clinical_reference_db", "policy_documents"}
@@ -37,14 +38,30 @@ KNOWN_TOOLS = {
     "find_related_articles",
 }
 
+
 ANSWER_MARKER = "Answer:"
+
+FAITHFULNESS_MIN = float(os.getenv("FAITHFULNESS_MIN", "0.3"))
+
+_NO_RESULT_MARKERS = (
+    "no articles found",
+    "no results",
+    "no matching",
+    "0 articles",
+    "no relevant",
+    "not found",
+    "no data",
+    "no records",
+    "i don't know",
+    "i do not know",
+)
+
 
 GUARD_FLUSH_MAX_HOLD = 200
 _SENTENCE_BOUNDARIES = (". ", ".\n", "! ", "!\n", "? ", "?\n", "\n")
 
 
 def _split_flushable(pending: str) -> tuple:
-
     last = -1
     for b in _SENTENCE_BOUNDARIES:
         idx = pending.rfind(b)
@@ -118,8 +135,6 @@ class QueryResult(BaseModel):
     sources_used: Optional[str] = None
     faithfulness_score: Optional[float] = None
     relevance_score: Optional[float] = None
-    # Non-text nodes pulled from the retrieved source_nodes so the UI can render
-    # them alongside the answer (tables as tables, images inline).
     tables: Optional[List[TableAttachment]] = None
     images: Optional[List[ImageAttachment]] = None
 
@@ -127,13 +142,15 @@ class QueryResult(BaseModel):
 @router.post("/query")
 @limiter.limit(RATE_LIMIT_QUERY)
 async def query_agent(
-    request: Request,response: Response,payload: QueryRequest,
+    request: Request,
+    response: Response,
+    payload: QueryRequest,
     claims: Dict[str, Any] = Depends(get_current_claims),
 ):
-
     async def event_stream():
         try:
             yield _sse("step", {"id": "received", "label": "Query received", "status": "done"})
+
             _gate = get_guardrails_validator()
             _ok, _msg = _gate.validate_query_intent(payload.question)
             if not _ok:
@@ -174,10 +191,11 @@ async def query_agent(
             handler = agent.run(user_msg=payload.question, max_iterations=40)
             guard = get_guardrails_validator()
             guard_applies = False         
-            guard_pending = ""            
+            guard_pending = ""           
             answer_started = False        
-            step_buffer = ""            
+            step_buffer = ""              
             streamed_live = False         
+
             tool_call_results: List[ToolCallResult] = []
             try:
                 async with asyncio.timeout(AGENT_RUN_TIMEOUT_SECONDS):
@@ -192,31 +210,14 @@ async def query_agent(
                                 if idx == -1:
                                     continue
                                 answer_started = True
-                                streamed_live = True
                                 yield _sse("step", {"id": "generate", "label": "LLM generating answer", "status": "active"})
-                                delta = step_buffer[idx + len(ANSWER_MARKER):].lstrip()
-                                if not delta:
-                                    continue
-                            if guard_applies:
-                                # Sanitize-before-wire path: flush complete
-                                # sentences through Presidio off-thread.
-                                guard_pending += delta
-                                flush, guard_pending = _split_flushable(guard_pending)
-                                if flush:
-                                    clean = await asyncio.to_thread(_sanitize_segment, guard, flush)
-                                    yield _sse("token", {"text": clean})
-                            else:
-                                yield _sse("token", {"text": delta})
                         elif isinstance(ev, ToolCall):
-
                             step_buffer = ""
                             answer_started = False
                             if ev.tool_name in GUARDED_TOOLS:
                                 guard_applies = True
                             logger.info(f"Agent calling tool: {ev.tool_name} | kwargs={ev.tool_kwargs}")
                             if ev.tool_name not in KNOWN_TOOLS:
-                                # Hallucinated Action name (e.g. literal "tool").
-                                # Log it, but don't surface it in the pipeline UI.
                                 logger.warning(f"Agent requested unknown tool {ev.tool_name!r} — hidden from pipeline UI")
                             else:
                                 yield _sse("step", {"id": f"tool-{ev.tool_name}", "label": f"Calling tool: {ev.tool_name}", "status": "active"})
@@ -239,7 +240,7 @@ async def query_agent(
                                 logger.info(f"LLM raw output head: {raw[:200]!r}")
                                 logger.info(f"LLM raw output tail: {raw[-200:]!r}")
 
-                    result = await handler
+                    result = await handler 
 
                     if guard_pending:
                         clean = await asyncio.to_thread(_sanitize_segment, guard, guard_pending)
@@ -263,6 +264,7 @@ async def query_agent(
                 yield _sse("step", {"id": "generate", "label": "LLM generating answer", "status": "active"})
 
             raw_answer = result.response.content if result.response else str(result)
+
             guard_block_reason = _extract_sql_guard_block(tool_call_results)
             if guard_block_reason:
                 logger.warning(f"SQL guardrail blocked this turn: {guard_block_reason}")
@@ -270,17 +272,6 @@ async def query_agent(
                 yield _sse("error", {"detail": guard_block_reason})
                 yield _sse("done", {"ok": False})
                 return
-            if not tool_call_results:
-                logger.warning(
-                    "Agent produced an answer with ZERO tool calls — replacing "
-                    f"ungrounded answer. Head: {str(raw_answer)[:150]!r}"
-                )
-                raw_answer = (
-                    "I couldn't ground an answer in your uploaded documents for "
-                    "this question (no retrieval was performed). Please rephrase "
-                    "the question to reference the document content — for "
-                    "example, name the document or a figure/table in it."
-                )
 
             _, answer, pii_summaries = guard.validate_output(
                 text=raw_answer,
@@ -289,6 +280,56 @@ async def query_agent(
             if pii_summaries:
                 logger.warning(f"PII redacted from query response: {pii_summaries}")
 
+            retrieved_contexts: List[str] = _gather_grounding_contexts(tool_call_results)
+
+            faithfulness_score: Optional[float] = None
+            relevance_score: Optional[float] = None
+            yield _sse("step", {"id": "evaluate", "label": "Evaluating answer quality", "status": "active"})
+            try:
+                evaluator_llm, evaluator_embeddings = build_evaluator_from_claims(claims)
+                if retrieved_contexts:
+                    result_faith = await Faithfulness(llm=evaluator_llm).ascore(
+                        user_input=payload.question,
+                        response=answer,
+                        retrieved_contexts=retrieved_contexts,
+                    )
+                    faithfulness_score = round(float(result_faith.value), 3)
+
+                result_relevance = await AnswerRelevancy(
+                    llm=evaluator_llm,
+                    embeddings=evaluator_embeddings,
+                ).ascore(
+                    user_input=payload.question,
+                    response=answer,
+                )
+                relevance_score = round(float(result_relevance.value), 3)
+
+                logger.info(
+                    f"Ragas scores | faithfulness={faithfulness_score} "
+                    f"relevancy={relevance_score} "
+                    f"(contexts={len(retrieved_contexts)})"
+                )
+            except Exception as ragas_err:
+                logger.error(f"Ragas evaluation failed: {ragas_err}", exc_info=True)
+            yield _sse("step", {"id": "evaluate", "label": "Answer quality evaluated", "status": "done"})
+
+            if (
+                not tool_call_results
+                or not retrieved_contexts
+                or (faithfulness_score is not None and faithfulness_score < FAITHFULNESS_MIN)
+            ):
+                logger.warning(
+                    f"Ungrounded answer gated (tools={len(tool_call_results)}, "
+                    f"contexts={len(retrieved_contexts)}, faithfulness={faithfulness_score}). "
+                    f"Head: {str(answer)[:150]!r}"
+                )
+                answer = (
+                    "I couldn't ground an answer in your uploaded documents, the "
+                    "clinical database, or the biomedical literature for this "
+                    "question. I only answer from retrieved sources — try "
+                    "rephrasing to reference your document content."
+                )
+
             if not streamed_live:
                 for i in range(0, len(answer), 20):
                     yield _sse("token", {"text": answer[i:i + 20]})
@@ -296,7 +337,6 @@ async def query_agent(
 
             list_of_tools_used: List[str] = _extract_tools_used(tool_call_results)
             sources_used: Optional[str] = _extract_sources_used(tool_call_results)
-
             tables_used, images_used = _extract_attachments(tool_call_results, answer=answer)
 
             yield _sse("step", {"id": "citations", "label": "Citations mapped", "status": "done"})
@@ -327,49 +367,6 @@ async def query_agent(
                     f"[Eval] Error during automatic evaluation: {eval_err}",
                     exc_info=True,
                 )
-            faithfulness_score: Optional[float] = None
-            relevance_score: Optional[float] = None
-
-            retrieved_contexts: List[str] = []
-            for tcr in tool_call_results:
-                raw_output = getattr(tcr.tool_output, 'raw_output', None)
-                source_nodes = getattr(raw_output, 'source_nodes', None)
-                if source_nodes:
-                    for node in source_nodes:
-                        node_obj = getattr(node, 'node', node)
-                        retrieved_contexts.append(node_obj.get_content())
-
-            yield _sse("step", {"id": "evaluate", "label": "Evaluating answer quality", "status": "active"})
-            try:
-                evaluator_llm, evaluator_embeddings = build_evaluator_from_claims(claims)
-
-                if retrieved_contexts:
-                    result_faith = await Faithfulness(llm=evaluator_llm).ascore(
-                        user_input=payload.question,
-                        response=answer,
-                        retrieved_contexts=retrieved_contexts,
-                    )
-                    faithfulness_score = round(float(result_faith.value), 3)
-
-                result_relevance = await AnswerRelevancy(
-                    llm=evaluator_llm,
-                    embeddings=evaluator_embeddings,
-                ).ascore(
-                    user_input=payload.question,
-                    response=answer,
-                )
-                relevance_score = round(float(result_relevance.value), 3)
-
-                logger.info(
-                    f"Ragas scores | faithfulness={faithfulness_score} "
-                    f"relevancy={relevance_score} "
-                    f"(contexts={len(retrieved_contexts)})"
-                )
-            except Exception as ragas_err:
-                logger.error(f"Ragas evaluation failed: {ragas_err}", exc_info=True)
-
-            yield _sse("step", {"id": "evaluate", "label": "Answer quality evaluated", "status": "done"})
-
             answer = _ensure_citation_markers(answer, sources_used)
 
             queryResult = QueryResult(
@@ -421,11 +418,11 @@ def _extract_sql_guard_block(tool_call_results: List["ToolCallResult"]) -> Optio
 
     return None
 
+
 IMAGES_STORAGE_DIR = Path(os.getenv("IMAGES_STORAGE_DIR", "stored_images")).resolve()
 
 
 def _node_image_path(node_obj, metadata: dict) -> Optional[str]:
-
     path = metadata.get('image_path')
     if not path:
         path = getattr(node_obj, 'image_path', None)
@@ -439,13 +436,18 @@ def _cited_indices(answer: Optional[str]) -> set:
         return set()
     return {int(m) for m in _CITATION_MARKER_RE.findall(answer)}
 
+
 ATTACHMENT_SCORE_RATIO = float(os.getenv("ATTACHMENT_SCORE_RATIO", "0.6"))
 
 
 def _is_relevant_attachment(
     idx: int, node, cited: set, max_score: float
 ) -> bool:
-    if cited:
+    node_obj = getattr(node, 'node', node)
+    meta = getattr(node_obj, 'metadata', {}) or {}
+    is_image = bool(_node_image_path(node_obj, meta))
+
+    if cited and not is_image:
         return idx in cited
     score = getattr(node, 'score', None)
     if score is None or max_score <= 0 or ATTACHMENT_SCORE_RATIO <= 0:
@@ -470,14 +472,12 @@ def _extract_attachments(
         source_nodes = getattr(raw_output, 'source_nodes', None)
         if not source_nodes:
             continue
-
         try:
             max_score = max(
                 (getattr(n, 'score', None) or 0.0) for n in source_nodes
             )
         except ValueError:
             max_score = 0.0
-
         try:
             summary_dbg = [
                 (
@@ -508,7 +508,6 @@ def _extract_attachments(
 
             original_table = metadata.get('original_table')
             is_table = content_type == 'table_summary' or bool(original_table)
-
             image_path = _node_image_path(node_obj, metadata)
 
             if is_table and original_table:
@@ -561,6 +560,32 @@ async def get_image(filename: str):
     return FileResponse(str(file_path))
 
 
+def _gather_grounding_contexts(tool_call_results: List["ToolCallResult"]) -> List[str]:
+    contexts: List[str] = []
+    for tcr in (tool_call_results or []):
+        tool_output = getattr(tcr, 'tool_output', None)
+        if tool_output is None or getattr(tool_output, 'is_error', False):
+            continue
+        raw_output = getattr(tool_output, 'raw_output', None)
+        source_nodes = getattr(raw_output, 'source_nodes', None)
+        if source_nodes:
+            for node in source_nodes:
+                node_obj = getattr(node, 'node', node)
+                contexts.append(node_obj.get_content())
+            continue
+        content = getattr(tool_output, 'content', None)
+        if not content:
+            continue
+        text = str(content).strip()
+        if len(text) < 40:
+            continue
+        low = text.lower()
+        if any(marker in low for marker in _NO_RESULT_MARKERS):
+            continue
+        contexts.append(text)
+    return contexts
+
+
 def _extract_tools_used(tool_call_results: List["ToolCallResult"]) -> List[str]:
 
     list_of_tools = []
@@ -571,6 +596,7 @@ def _extract_tools_used(tool_call_results: List["ToolCallResult"]) -> List[str]:
             list_of_tools.append(tool_name)
 
     return list_of_tools
+
 
 
 _CITATION_MARKER_RE = re.compile(r"\[\d+\]")
