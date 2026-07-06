@@ -82,9 +82,10 @@ class GuardrailsValidator:
             self.pii_guard = Guard().use(
                 DetectPII(
                     pii_entities=pii_entities,
-                    on_fail="fix"  # Automatically redact PII
+                    on_fail="fix",
+                    use_local=True,
                 )
-            )
+                )
             
             print("✓ LOCAL Guardrails validators initialized:")
             print("  - DetectPII (Output validation - PII detection & redaction)")

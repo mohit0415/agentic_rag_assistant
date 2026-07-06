@@ -9,9 +9,15 @@ from ..guard.validatior_guard import GuardrailsValidator, get_guardrails_validat
 
 class GuardrailsService:
     
-    def __init__(self, documents: Optional[List[Document]] = None, validator: Optional[GuardrailsValidator] = None):
+    def __init__(
+        self,
+        documents: Optional[List[Document]] = None,
+        validator: Optional[GuardrailsValidator] = None,
+        retrieval_service: Optional[Any] = None,
+    ):
         self.documents = documents if documents is not None else []
         self.validator = validator if validator is not None else get_guardrails_validator()
+        self.retrieval_service = retrieval_service
     
     
     def safe_query(

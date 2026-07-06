@@ -46,7 +46,6 @@ dependencies = [
 name = "guardrails"
 url = "https://pypi.guardrailsai.com/simple"
 explicit = true
-authenticate = "always"
 
 [tool.uv.sources]
 guardrails-grhub-detect-pii = { index = "guardrails" }
