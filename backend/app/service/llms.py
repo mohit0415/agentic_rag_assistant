@@ -103,13 +103,15 @@ def initialize_embeddings(
                 from llama_index.embeddings.openai_like import OpenAILikeEmbedding
             except ImportError as ie:
                 raise ImportError(_OPENAI_LIKE_INSTALL_HINT) from ie
+            
+            http_client, async_http_client = _gemini_clients(config, gemini_api_key)
             embedding_model = OpenAILikeEmbedding(
                 model_name=config.get('gemini_embed_model', 'gemini-embedding-2-preview'),
                 api_key=gemini_api_key,
                 api_base=config.get('gemini_openai_base'),
                 http_client=http_client,
                 async_http_client=async_http_client,
-                max_retries=0,  # 429 recovery lives in the transport
+                max_retries=0, 
                 dimensions=embed_dim,
                 embed_batch_size=10,
             )
