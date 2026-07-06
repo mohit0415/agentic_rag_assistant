@@ -1,3 +1,4 @@
+import os
 import shutil
 from typing import List, Optional, Any
 from pathlib import Path
@@ -8,7 +9,8 @@ from .image_captioning import generate_caption
 from ...config.config import logger
 
 
-IMAGES_STORAGE_DIR = Path("stored_images")
+
+IMAGES_STORAGE_DIR = Path(os.getenv("IMAGES_STORAGE_DIR", "stored_images")).resolve()
 
 
 class ImageProcessor:
