@@ -3,7 +3,7 @@ import json
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from typing import Optional
+from typing import Any, List, Optional
 
 from ..config.config import logger,load_config
 from llama_index.core.settings import Settings
@@ -13,6 +13,9 @@ from ..service.structured_data_db import get_sql_database
 from ..service.guard.validatior_guard import GuardrailsValidator, get_guardrails_validator
 from llama_index.core.query_engine import NLSQLTableQueryEngine, CitationQueryEngine
 from llama_index.core.retrievers import VectorIndexAutoRetriever, QueryFusionRetriever
+from llama_index.core.postprocessor import LLMRerank, SimilarityPostprocessor
+from llama_index.core.postprocessor.types import BaseNodePostprocessor
+from llama_index.core.schema import NodeWithScore, QueryBundle
 from llama_index.retrievers.bm25 import BM25Retriever
 from llama_index.core.vector_stores.types import MetadataInfo, VectorStoreInfo
 from llama_index.core.vector_stores import MetadataFilters, ExactMatchFilter
@@ -23,6 +26,55 @@ from ..service.mcp.mcp_tools import PubMedService
 def get_app_state():
     from ..app import app_state
     return app_state
+
+
+class KeepTopN(BaseNodePostprocessor):
+    top_n: int = 5
+
+    @classmethod
+    def class_name(cls) -> str:
+        return "KeepTopN"
+
+    def _postprocess_nodes(
+        self,
+        nodes: List[NodeWithScore],
+        query_bundle: Optional[QueryBundle] = None,
+    ) -> List[NodeWithScore]:
+        if not nodes:
+            return nodes
+        return nodes[: self.top_n]
+
+
+class SafeLLMRerank(BaseNodePostprocessor):
+    inner: Any = None
+    fallback_top_n: int = 5
+
+    @classmethod
+    def class_name(cls) -> str:
+        return "SafeLLMRerank"
+
+    def _postprocess_nodes(
+        self,
+        nodes: List[NodeWithScore],
+        query_bundle: Optional[QueryBundle] = None,
+    ) -> List[NodeWithScore]:
+        if not nodes:
+            return nodes
+        try:
+            reranked = self.inner.postprocess_nodes(nodes, query_bundle=query_bundle)
+        except Exception as e:
+            logger.warning(
+                f"LLMRerank failed ({type(e).__name__}: {e}); falling back to "
+                f"top-{self.fallback_top_n} retrieved nodes to preserve grounding."
+            )
+            reranked = []
+        if not reranked:
+            logger.warning(
+                "LLMRerank returned 0 nodes; falling back to "
+                f"top-{self.fallback_top_n} retrieved nodes to preserve grounding."
+            )
+            return nodes[: self.fallback_top_n]
+        return reranked
 
 
 class Tools:
@@ -82,6 +134,7 @@ class Tools:
                     type="str",
                     description="Name of the user who uploaded the document",
                 ),
+                # --- richer medical-education metadata keys (added at ingestion) ---
                 MetadataInfo(
                     name="source_type",
                     type="str",
@@ -137,7 +190,6 @@ class Tools:
                 ),
             ],
         )
-
         top_k = int(os.getenv("RETRIEVAL_TOP_K", "15"))
         rerank_top_n = int(os.getenv("RERANK_TOP_N", "5"))
 
@@ -181,6 +233,7 @@ class Tools:
             logger.info("policy_documents: plain semantic retrieval (no metadata filters)")
 
         retriever = vector_retriever
+        scores_are_cosine = True
         try:
             available_nodes = list(self.index.docstore.docs.values())
         except Exception as e:
@@ -201,6 +254,7 @@ class Tools:
                 mode="reciprocal_rerank",
                 use_async=False,
             )
+            scores_are_cosine = False  
             logger.info(f"BM25 fusion enabled with {len(available_nodes)} nodes")
         else:
             logger.warning(
@@ -209,23 +263,51 @@ class Tools:
             )
 
         node_postprocessors = []
+
         try:
-            from llama_index.core.postprocessor import SentenceTransformerRerank
-            reranker = SentenceTransformerRerank(
-                model=os.getenv("RERANK_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"),
-                top_n=rerank_top_n,
+            similarity_cutoff = float(os.getenv("SIMILARITY_CUTOFF", "0.35"))
+        except ValueError:
+            similarity_cutoff = 0.35
+        if similarity_cutoff > 0 and scores_are_cosine:
+            node_postprocessors.append(
+                SimilarityPostprocessor(similarity_cutoff=similarity_cutoff)
             )
-            node_postprocessors.append(reranker)
+            logger.info(f"SimilarityPostprocessor enabled (cutoff={similarity_cutoff})")
+        elif similarity_cutoff > 0 and not scores_are_cosine:
             logger.info(
-                f"Cross-encoder reranker enabled (retrieve {top_k} -> rerank {rerank_top_n})"
-            )
-        except Exception as e:
-            logger.info(
-                f"Reranker not active ({type(e).__name__}: {e}); using wide "
-                f"retrieval only (top_k={top_k}). Install sentence-transformers "
-                f"to enable relevance reranking."
+                "SimilarityPostprocessor skipped: BM25 fusion active (scores are "
+                "RRF, not cosine); relevance trim below handles narrowing."
             )
 
+        _enable_llm_rerank = os.getenv("ENABLE_LLM_RERANK", "false").strip().lower() in (
+            "1", "true", "yes", "on"
+        )
+        if _enable_llm_rerank:
+            try:
+                base_reranker = LLMRerank(
+                    llm=self.llm,
+                    top_n=rerank_top_n,
+                    choice_batch_size=min(top_k, 10),
+                )
+                node_postprocessors.append(
+                    SafeLLMRerank(inner=base_reranker, fallback_top_n=rerank_top_n)
+                )
+                logger.info(
+                    f"SafeLLMRerank enabled (retrieve {top_k} -> rerank {rerank_top_n}; "
+                    f"falls back to top-{rerank_top_n} if the LLM rerank empties)"
+                )
+            except Exception as e:
+                node_postprocessors.append(KeepTopN(top_n=rerank_top_n))
+                logger.info(
+                    f"LLMRerank could not be built ({type(e).__name__}: {e}); "
+                    f"using deterministic KeepTopN({rerank_top_n})."
+                )
+        else:
+            node_postprocessors.append(KeepTopN(top_n=rerank_top_n))
+            logger.info(
+                f"KeepTopN enabled (retrieve {top_k} -> keep {rerank_top_n}, "
+                f"deterministic, no LLM call, cannot break grounding)"
+            )
         query_engine = CitationQueryEngine(
             retriever=retriever,
             llm=self.llm,
@@ -254,7 +336,6 @@ class Tools:
     def get_sql_tool(self):
 
         logger.info("Creating SQL tool...")
-
         sql_query_engine = NLSQLTableQueryEngine(
             sql_database=self.sql_db_connection,
             llm=self.llm,
@@ -344,6 +425,7 @@ class Tools:
                 ]
             )
             med_tools = [self._clamp_mcp_tool(t) for t in med_tools]
+
             return med_tools
         except Exception as e:
             logger.error(f"Failed to load MCP tools: {e}", exc_info=True)

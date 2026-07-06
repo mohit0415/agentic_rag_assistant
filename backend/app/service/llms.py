@@ -69,7 +69,7 @@ def initialize_llm(
                 api_version=config.get('api_version'),
                 temperature=0.1,
                 max_retries=5,
-                max_completion_tokens=4000,
+                max_completion_tokens=10000,
             )
 
         if llm is None:
