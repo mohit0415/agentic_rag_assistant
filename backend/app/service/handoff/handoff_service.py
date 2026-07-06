@@ -12,13 +12,13 @@ from ...config.config import logger
 HANDOFF_FAITHFULNESS_THRESHOLD = float(os.getenv("HANDOFF_FAITHFULNESS_THRESHOLD", "0.6"))
 HANDOFF_RELEVANCE_THRESHOLD = float(os.getenv("HANDOFF_RELEVANCE_THRESHOLD", "0.5"))
 
-
 SMTP_HOST = os.getenv("SMTP_HOST")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USERNAME = os.getenv("SMTP_USERNAME")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 EMAIL_FROM = os.getenv("APPLICATION_EMAIL")
 EMAIL_TO = os.getenv("SUPPORT_EMAIL")
+
 
 _EXPLICIT_KEYWORDS = (
     "human agent",
@@ -48,19 +48,21 @@ def generate_handoff_reference_id(now: Optional[datetime.datetime] = None) -> st
 
 
 def evaluate_handoff_trigger(
-    faithfulness: Optional[float],
-    relevance: Optional[float],
+    faithfulness: Optional[float],relevance: Optional[float],
     user_question: str,
     no_context: bool,
 ) -> Dict[str, Any]:
-
     question_lower = (user_question or "").lower()
 
+    # 1. User explicitly asked for a human -> highest priority.
     if any(kw in question_lower for kw in _EXPLICIT_KEYWORDS):
         return {"trigger": True, "reason": "explicit user request for a human", "priority": "high"}
+
+    # 2. Nothing retrieved -> the agent had no grounding at all.
     if no_context:
         return {"trigger": True, "reason": "retrieval returned no grounding context", "priority": "high"}
 
+    # 3. Answer not grounded in retrieved context (ragas faithfulness).
     if faithfulness is not None and faithfulness < HANDOFF_FAITHFULNESS_THRESHOLD:
         return {
             "trigger": True,
@@ -74,7 +76,6 @@ def evaluate_handoff_trigger(
             "reason": f"answer relevance {relevance} below threshold {HANDOFF_RELEVANCE_THRESHOLD}",
             "priority": "normal",
         }
-
     return {"trigger": False, "reason": "", "priority": "normal"}
 
 

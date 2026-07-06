@@ -18,23 +18,58 @@ from llama_index.core.agent.react.types import (
 
 
 class LenientReActOutputParser(ReActOutputParser):
-    MAX_IMPLICIT_REJECTIONS = 4
 
-    def __init__(self, *args, **kwargs):
+    MAX_IMPLICIT_REJECTIONS = 2
+
+    def __init__(self, *args, valid_tools=None, **kwargs):
         super().__init__(*args, **kwargs)
         self._implicit_rejections = 0
         self._tool_used_this_turn = False
+        self._forced_question = None
+        self._valid_tools = set(valid_tools or ())
+
+    def set_forced_question(self, question):
+        """Give the parser the raw user question so the forced-retrieval
+        fallback can search on the real query instead of the model's draft."""
+        self._forced_question = (question or "").strip() or None
+
+    def set_valid_tools(self, names):
+        """Register the real tool names so invented ones can be corrected."""
+        self._valid_tools = set(names or ())
+
+    def _forced_query_text(self, step=None):
+        """Best retrieval query: the real user question, else the model's
+        own action input, else a generic fallback."""
+        forced = self._forced_question
+        if not forced and step is not None:
+            ai = step.action_input if isinstance(getattr(step, "action_input", None), dict) else {}
+            forced = str(ai.get("input") or ai.get("query") or "").strip()
+        return (forced or "the user's question")[:500]
 
     def parse(self, output: str, is_streaming: bool = False):
         try:
             step = super().parse(output, is_streaming=is_streaming)
         except ValueError:
-            step = None 
+            step = None  
 
         if isinstance(step, ActionReasoningStep):
+            action = (step.action or "").strip()
+            if not self._valid_tools or action in self._valid_tools:
+                self._tool_used_this_turn = True
+                self._implicit_rejections = 0
+                return step
+            logger.warning(
+                f"Agent picked unknown tool {action!r}; rewriting to a "
+                f"policy_documents retrieval to stay grounded."
+            )
             self._tool_used_this_turn = True
             self._implicit_rejections = 0
-            return step
+            return ActionReasoningStep(
+                thought=(step.thought or "").strip()
+                or "(Corrected) Using policy_documents to retrieve grounded context.",
+                action="policy_documents",
+                action_input={"input": self._forced_query_text(step)},
+            )
         if (
             not self._tool_used_this_turn
             and self._implicit_rejections < self.MAX_IMPLICIT_REJECTIONS
@@ -50,15 +85,33 @@ class LenientReActOutputParser(ReActOutputParser):
                 "Never answer from your own knowledge."
             )
 
+        if self._tool_used_this_turn:
+            self._implicit_rejections = 0
+            self._tool_used_this_turn = False
+            if step is not None:
+                return step
+            text = output.split("Thought:", 1)[-1].strip() if "Thought:" in output else output.strip()
+            return ResponseReasoningStep(
+                thought="(Implicit) Model gave a final answer without the Answer: marker.",
+                response=text,
+                is_streaming=is_streaming,
+            )
         self._implicit_rejections = 0
-        self._tool_used_this_turn = False
-        if step is not None:
-            return step
-        text = output.split("Thought:", 1)[-1].strip() if "Thought:" in output else output.strip()
-        return ResponseReasoningStep(
-            thought="(Implicit) Model gave a final answer without the Answer: marker.",
-            response=text,
-            is_streaming=is_streaming,
+        self._tool_used_this_turn = True
+        recovered = (
+            step.response if isinstance(step, ResponseReasoningStep)
+            else (output.split("Thought:", 1)[-1] if "Thought:" in output else output)
+        ).strip()
+        if recovered.lower().startswith("answer:"):
+            recovered = recovered[len("answer:"):].strip()
+        query_text = (self._forced_question or recovered)[:500] or "the user's question"
+        return ActionReasoningStep(
+            thought=(
+                "(Forced) No tool was used after repeated attempts; retrieving "
+                "from policy_documents before answering to stay grounded."
+            ),
+            action="policy_documents",
+            action_input={"input": query_text},
         )
 
 
@@ -67,15 +120,12 @@ def get_app_state():
     return app_state
 
 
-_agent = None
-_tools = None
+_agent_tools = None
 
 
 async def get_agent(index: VectorStoreIndex, llm=None, embed_model=None) -> ReActAgent:
 
-
-    global _agent
-    global _tools
+    global _agent_tools
 
     config = load_config()
     app_state = get_app_state()
@@ -93,27 +143,28 @@ async def get_agent(index: VectorStoreIndex, llm=None, embed_model=None) -> ReAc
 
     use_gemini = bool(config.get('use_gemini'))
 
-    # Only the single-key Azure path is safe to cache globally.
-    if not use_gemini and _agent is not None:
-        return _agent
+    if not use_gemini and _agent_tools is not None:
+        agent_tools = _agent_tools
+    else:
+        tools = Tools(index=index, llm=llm, embed_model=embed_model)
+        sql_tool = tools.get_sql_tool()
+        vector_tool = tools.get_vector_tool()
+        mcp_tools = await tools.get_mcp_tool()
+        agent_tools = [vector_tool, sql_tool, *mcp_tools]
+        if not use_gemini:
+            _agent_tools = agent_tools
 
-    tools = Tools(index=index, llm=llm, embed_model=embed_model)
-    if not use_gemini:
-        _tools = tools
-
-    sql_tool = tools.get_sql_tool()
-    vector_tool = tools.get_vector_tool()
-    mcp_tools = await tools.get_mcp_tool()
-
-    agent_tools = [vector_tool, sql_tool, *mcp_tools]
-
-
+    valid_tool_names = {
+        getattr(getattr(t, "metadata", None), "name", None) for t in agent_tools
+    }
+    valid_tool_names.discard(None)
+    logger.info(f"Registered tool names for parser: {sorted(valid_tool_names)}")
 
     agent = ReActAgent(
         tools=agent_tools,
         verbose=True,
         llm=llm,
-        output_parser=LenientReActOutputParser(),
+        output_parser=LenientReActOutputParser(valid_tools=valid_tool_names),
         system_prompt="""
         You are an intelligent Documents analytics assistant with access to a SQL database, a vector store of documents, and a PubMed/NCBI biomedical literature tool.
 
@@ -170,8 +221,6 @@ async def get_agent(index: VectorStoreIndex, llm=None, embed_model=None) -> ReAc
         """
     )
 
-    if not use_gemini:
-        _agent = agent
     return agent
 
 

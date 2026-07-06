@@ -155,8 +155,7 @@ class QueryResult(BaseModel):
 
 @router.post("/query")
 @limiter.limit(RATE_LIMIT_QUERY)
-async def query_agent(
-    request: Request,
+async def query_agent(request: Request,
     response: Response,
     payload: QueryRequest,
     claims: Dict[str, Any] = Depends(get_current_claims),
@@ -201,6 +200,17 @@ async def query_agent(
             yield _sse("step", {"id": "agent", "label": "Agent instantiated", "status": "done"})
 
             yield _sse("step", {"id": "retrieve", "label": "Selecting tools & retrieving", "status": "active"})
+
+            # Give the ReAct output parser the raw question so that, if the
+            # model tries to answer a (often compound) question without calling
+            # a tool, the parser's forced-retrieval fallback searches on the
+            # real query — covering every clause — instead of the model's draft.
+            try:
+                op = getattr(agent, "output_parser", None)
+                if op is not None and hasattr(op, "set_forced_question"):
+                    op.set_forced_question(payload.question)
+            except Exception as _e:
+                logger.debug(f"Could not set forced question on parser: {_e}")
 
             handler = agent.run(user_msg=payload.question, max_iterations=40)
             guard = get_guardrails_validator()
