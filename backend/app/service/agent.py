@@ -4,7 +4,6 @@ from llama_index.agent.openai import OpenAIAgent
 from llama_index.core import Settings
 from llama_index.llms.azure_openai import AzureOpenAI
 from llama_index.embeddings.azure_openai import AzureOpenAIEmbedding
-
 from ..service.tools import Tools
 from ..config.config import load_config,logger
 from llama_index.core import VectorStoreIndex

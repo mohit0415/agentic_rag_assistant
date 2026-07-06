@@ -214,7 +214,7 @@ const LoginPage: React.FC = () => {
                 onChange={(e) => setUsername(e.target.value)}
                 autoComplete="username"
                 required
-                placeholder="dr.jane"
+                placeholder="dr.mohit sai kumar"
                 className="ml-input pl-10"
               />
             </div>
