@@ -24,6 +24,13 @@ export interface ImageAttachment {
   caption?: string | null;
 }
 
+export interface HandoffInfo {
+  referenceId: string;
+  reason?: string | null;
+  priority?: string | null;
+  message?: string | null;
+}
+
 export interface QueryMeta {
   question: string;
   answer: string;
@@ -31,6 +38,10 @@ export interface QueryMeta {
   sources_used?: string | null;
   tables?: TableAttachment[] | null;
   images?: ImageAttachment[] | null;
+  handoff_triggered?: boolean | null;
+  handoff_reference_id?: string | null;
+  handoff_reason?: string | null;
+  handoff_priority?: string | null;
 }
 
 export function parseSources(raw?: string | null): SourceItem[] {

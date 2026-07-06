@@ -4,6 +4,7 @@ import json
 import asyncio
 import logging
 import tempfile
+import datetime
 from pathlib import Path
 from typing import List, Optional, Dict,Any
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request, Response
@@ -21,6 +22,11 @@ from llama_index.core.agent.workflow import AgentOutput, AgentStream, ToolCall, 
 from ..langfuse.langfuse_client import get_langfuse_client
 from ..service.llms import build_evaluator_from_claims
 from ragas.metrics.collections import Faithfulness, AnswerRelevancy
+from ..service.handoff import (
+    generate_handoff_reference_id,
+    evaluate_handoff_trigger,
+    send_handoff_email,
+)
 
 
 router = APIRouter()
@@ -98,6 +104,10 @@ def get_app_state():
 
 class QueryRequest(BaseModel):
     question: str = Field(..., description="The question to ask the Reports,Policies,or any topic analytics agent", min_length=1)
+    user_email: Optional[str] = Field(
+        default=None,
+        description="Optional user e-mail for human-handoff follow-up",
+    )
 
     @field_validator('question')
     def validate_ques(cls,v:str):
@@ -137,6 +147,10 @@ class QueryResult(BaseModel):
     relevance_score: Optional[float] = None
     tables: Optional[List[TableAttachment]] = None
     images: Optional[List[ImageAttachment]] = None
+    handoff_triggered: Optional[bool] = None
+    handoff_reference_id: Optional[str] = None
+    handoff_reason: Optional[str] = None
+    handoff_priority: Optional[str] = None
 
 
 @router.post("/query")
@@ -341,6 +355,7 @@ async def query_agent(
 
             yield _sse("step", {"id": "citations", "label": "Citations mapped", "status": "done"})
 
+            handoff_trace_id: Optional[str] = None
             try:
                 langfuse_client = get_langfuse_client()
                 if langfuse_client is not None:
@@ -353,6 +368,7 @@ async def query_agent(
                         },
                     )
                     trace_id = span.trace_id
+                    handoff_trace_id = trace_id
 
                     span.update(
                         output={
@@ -369,6 +385,65 @@ async def query_agent(
                 )
             answer = _ensure_citation_markers(answer, sources_used)
 
+            handoff_triggered = False
+            handoff_reference_id: Optional[str] = None
+            handoff_reason: Optional[str] = None
+            handoff_priority: Optional[str] = None
+            try:
+                decision = evaluate_handoff_trigger(
+                    faithfulness=faithfulness_score,
+                    relevance=relevance_score,
+                    user_question=payload.question,
+                    no_context=not retrieved_contexts,
+                )
+                if decision.get("trigger"):
+                    handoff_triggered = True
+                    handoff_reason = decision.get("reason")
+                    handoff_priority = decision.get("priority", "normal")
+                    handoff_reference_id = generate_handoff_reference_id()
+
+                    handoff_context = {
+                        "reference_id": handoff_reference_id,
+                        "trace_id": handoff_trace_id,
+                        "timestamp": datetime.datetime.now(
+                            datetime.timezone.utc
+                        ).isoformat(),
+                        "priority": handoff_priority,
+                        "trigger_reason": handoff_reason,
+                        "user_metadata": {
+                            "user_email": payload.user_email,
+                            "user": claims.get("sub"),
+                        },
+                        "query_history": [payload.question],
+                        "tools_used": list_of_tools_used,
+                        "generated_answer": answer,
+                        "evaluation_scores": {
+                            "faithfulness": faithfulness_score,
+                            "relevance": relevance_score,
+                        },
+                        "retrieved_chunks": retrieved_contexts,
+                    }
+                    asyncio.create_task(
+                        asyncio.to_thread(send_handoff_email, handoff_context)
+                    )
+                    logger.info(
+                        f"Human handoff triggered (ref={handoff_reference_id}, "
+                        f"priority={handoff_priority}, reason={handoff_reason})"
+                    )
+                    yield _sse("handoff", {
+                        "reference_id": handoff_reference_id,
+                        "reason": handoff_reason,
+                        "priority": handoff_priority,
+                        "message": (
+                            "This question has been escalated to a human support "
+                            f"agent. Your reference ID is {handoff_reference_id}."
+                            + (f" We'll follow up at {payload.user_email}."
+                               if payload.user_email else "")
+                        ),
+                    })
+            except Exception as ho_err:
+                logger.error(f"Handoff evaluation failed: {ho_err}", exc_info=True)
+
             queryResult = QueryResult(
                 question=payload.question,
                 tools_used=list_of_tools_used,
@@ -378,6 +453,10 @@ async def query_agent(
                 relevance_score=relevance_score,
                 tables=[TableAttachment(**t) for t in tables_used] or None,
                 images=[ImageAttachment(**i) for i in images_used] or None,
+                handoff_triggered=handoff_triggered,
+                handoff_reference_id=handoff_reference_id,
+                handoff_reason=handoff_reason,
+                handoff_priority=handoff_priority,
             )
             yield _sse("meta", queryResult.model_dump())
 

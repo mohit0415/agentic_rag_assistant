@@ -7,6 +7,7 @@ import {
   SourceItem,
   TableAttachment,
   ImageAttachment,
+  HandoffInfo,
 } from "../types";
 import { EvalScores } from "../components/EvalScorePanel";
 import StringData from "../StringData";
@@ -31,6 +32,7 @@ export interface Message {
   toolsUsed?: string[];
   tables?: TableAttachment[];
   images?: ImageAttachment[];
+  handoff?: HandoffInfo | null;
   streaming?: boolean;
   error?: boolean;
 }
@@ -134,6 +136,16 @@ export function useChat() {
                   answerBuffer += data?.text ?? "";
                   patchMessage(aiId, { content: answerBuffer });
                   break;
+                case "handoff":
+                  patchMessage(aiId, {
+                    handoff: {
+                      referenceId: data?.reference_id ?? "",
+                      reason: data?.reason ?? null,
+                      priority: data?.priority ?? null,
+                      message: data?.message ?? null,
+                    },
+                  });
+                  break;
                 case "meta": {
                   const finalAnswer = data?.answer || answerBuffer;
                   const parsedSources = parseSources(data?.sources_used);
@@ -150,6 +162,15 @@ export function useChat() {
                         ? data.relevance_score
                         : null,
                   });
+                  const metaHandoff: HandoffInfo | undefined =
+                    data?.handoff_triggered && data?.handoff_reference_id
+                      ? {
+                          referenceId: data.handoff_reference_id,
+                          reason: data?.handoff_reason ?? null,
+                          priority: data?.handoff_priority ?? null,
+                          message: null,
+                        }
+                      : undefined;
                   patchMessage(aiId, {
                     content: finalAnswer,
                     citations: extractCitations(finalAnswer),
@@ -157,6 +178,7 @@ export function useChat() {
                     toolsUsed: tools,
                     tables: Array.isArray(data?.tables) ? data.tables : [],
                     images: resolveImages(data?.images),
+                    ...(metaHandoff ? { handoff: metaHandoff } : {}),
                   });
                   break;
                 }

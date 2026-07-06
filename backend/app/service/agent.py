@@ -11,7 +11,10 @@ from llama_index.core import VectorStoreIndex
 
 from llama_index.core.agent.workflow import ReActAgent
 from llama_index.core.agent.react.output_parser import ReActOutputParser
-from llama_index.core.agent.react.types import ResponseReasoningStep
+from llama_index.core.agent.react.types import (
+    ActionReasoningStep,
+    ResponseReasoningStep,
+)
 
 
 class LenientReActOutputParser(ReActOutputParser):
@@ -20,34 +23,43 @@ class LenientReActOutputParser(ReActOutputParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._implicit_rejections = 0
+        self._tool_used_this_turn = False
 
     def parse(self, output: str, is_streaming: bool = False):
         try:
             step = super().parse(output, is_streaming=is_streaming)
-            if not isinstance(step, ResponseReasoningStep):
-                self._implicit_rejections = 0
-            return step
         except ValueError:
-            text = output.split("Thought:", 1)[-1].strip() if "Thought:" in output else output.strip()
-            if not text:
-                raise
-            if self._implicit_rejections < self.MAX_IMPLICIT_REJECTIONS:
-                self._implicit_rejections += 1
-                raise ValueError(
-                    "You wrote an answer without taking any Action. That is "
-                    "not allowed — you MUST first retrieve information with "
-                    "a tool. Respond in EXACTLY this format:\n"
-                    "Thought: I need to search the uploaded documents.\n"
-                    "Action: policy_documents\n"
-                    'Action Input: {"input": "<the user\'s question>"}\n'
-                    "Never answer from your own knowledge."
-                )
+            step = None 
+
+        if isinstance(step, ActionReasoningStep):
+            self._tool_used_this_turn = True
             self._implicit_rejections = 0
-            return ResponseReasoningStep(
-                thought="(Implicit) Model gave a final answer without the Answer: marker.",
-                response=text,
-                is_streaming=is_streaming,
+            return step
+        if (
+            not self._tool_used_this_turn
+            and self._implicit_rejections < self.MAX_IMPLICIT_REJECTIONS
+        ):
+            self._implicit_rejections += 1
+            raise ValueError(
+                "You wrote an answer without taking any Action. That is "
+                "not allowed — you MUST first retrieve information with "
+                "a tool. Respond in EXACTLY this format:\n"
+                "Thought: I need to search the uploaded documents.\n"
+                "Action: policy_documents\n"
+                'Action Input: {"input": "<the user\'s question>"}\n'
+                "Never answer from your own knowledge."
             )
+
+        self._implicit_rejections = 0
+        self._tool_used_this_turn = False
+        if step is not None:
+            return step
+        text = output.split("Thought:", 1)[-1].strip() if "Thought:" in output else output.strip()
+        return ResponseReasoningStep(
+            thought="(Implicit) Model gave a final answer without the Answer: marker.",
+            response=text,
+            is_streaming=is_streaming,
+        )
 
 
 def get_app_state():
@@ -60,6 +72,8 @@ _tools = None
 
 
 async def get_agent(index: VectorStoreIndex, llm=None, embed_model=None) -> ReActAgent:
+
+
     global _agent
     global _tools
 
@@ -79,6 +93,7 @@ async def get_agent(index: VectorStoreIndex, llm=None, embed_model=None) -> ReAc
 
     use_gemini = bool(config.get('use_gemini'))
 
+    # Only the single-key Azure path is safe to cache globally.
     if not use_gemini and _agent is not None:
         return _agent
 

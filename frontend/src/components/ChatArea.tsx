@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from "react";
-import { HeartPulse, Table2, User, Wrench } from "lucide-react";
+import { HeartPulse, LifeBuoy, Table2, User, Wrench } from "lucide-react";
 import StringData from "../StringData";
 import Markdown from "./Markdown";
 import type { Message, Citation, SourceChip } from "../hooks/useChat";
@@ -96,6 +96,28 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                   {msg.content}
                   {msg.streaming && <span className="stream-caret" />}
                 </p>
+              )}
+
+              {msg.handoff && (
+                <div className="mt-3 flex items-start gap-2.5 rounded-xl border border-amber-400/30 bg-amber-400/[0.08] px-3 py-2.5">
+                  <LifeBuoy size={15} className="mt-0.5 flex-shrink-0 text-amber-400" />
+                  <div className="text-[11.5px] leading-snug text-[#FDE68A]">
+                    <div className="font-semibold text-amber-300">
+                      Escalated to a human agent
+                    </div>
+                    <div className="mt-0.5">
+                      {msg.handoff.message ||
+                        "This question has been handed off to a human support agent."}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-amber-200/70">
+                      <span>Ref: {msg.handoff.referenceId}</span>
+                      {msg.handoff.priority && (
+                        <span>Priority: {msg.handoff.priority}</span>
+                      )}
+                      {msg.handoff.reason && <span>Reason: {msg.handoff.reason}</span>}
+                    </div>
+                  </div>
+                </div>
               )}
 
               {msg.tables && msg.tables.length > 0 && (
