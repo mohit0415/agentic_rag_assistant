@@ -357,6 +357,11 @@ class Tools:
 
                 _fr_model = os.getenv("FLASHRANK_MODEL", "ms-marco-MiniLM-L-12-v2")
                 _fr_cache = os.getenv("FLASHRANK_CACHE_DIR", "").strip() or None
+                if _fr_cache and not os.path.isabs(_fr_cache):
+                    _backend_root = os.path.dirname(
+                        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                    )
+                    _fr_cache = os.path.join(_backend_root, _fr_cache)
                 _flash_ranker = (
                     Ranker(model_name=_fr_model, cache_dir=_fr_cache)
                     if _fr_cache
