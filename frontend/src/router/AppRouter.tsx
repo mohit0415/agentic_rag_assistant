@@ -13,10 +13,10 @@ const AppRouter: React.FC = () => (
     <AuthProvider>
       <RateLimitProvider>
       <Routes>
-        <Route path="/login" element={<LoginPage />} />
+        <Route path="/" element={<LoginPage />} />
 
         <Route
-          path="/"
+          path="/chat"
           element={
             <ProtectedRoute>
               <ChatPage />
