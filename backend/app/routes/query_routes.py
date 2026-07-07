@@ -677,7 +677,7 @@ def _extract_tools_used(tool_call_results: List["ToolCallResult"]) -> List[str]:
 
 
 
-_CITATION_MARKER_RE = re.compile(r"\[\d+\]")
+_CITATION_MARKER_RE = re.compile(r"\[(\d+)\]")
 
 
 def _ensure_citation_markers(answer: Optional[str], sources_used: Optional[str]) -> Optional[str]:
