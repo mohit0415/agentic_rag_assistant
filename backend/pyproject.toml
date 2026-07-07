@@ -40,6 +40,7 @@ dependencies = [
     "langchain-community==0.3.31",
     "guardrails-grhub-detect-pii",
     "guardrails-ai==0.10.2",
+    "flashrank>=0.2.10",
 ]
 
 [[tool.uv.index]]

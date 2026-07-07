@@ -39,6 +39,7 @@ llama-index-retrievers-bm25==0.5.2
 llama-index-tools-mcp==0.2.6
 llama-index-vector-stores-postgres==0.5.5
 bm25s==0.2.14
+flashrank==0.2.10
 
 # MCP
 mcp==1.28.1

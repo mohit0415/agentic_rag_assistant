@@ -16,6 +16,7 @@ from llama_index.core.retrievers import VectorIndexAutoRetriever, QueryFusionRet
 from llama_index.core.postprocessor import LLMRerank, SimilarityPostprocessor
 from llama_index.core.postprocessor.types import BaseNodePostprocessor
 from llama_index.core.schema import NodeWithScore, QueryBundle
+from llama_index.core.base.response.schema import Response
 from llama_index.retrievers.bm25 import BM25Retriever
 from llama_index.core.vector_stores.types import MetadataInfo, VectorStoreInfo
 from llama_index.core.vector_stores import MetadataFilters, ExactMatchFilter
@@ -94,6 +95,54 @@ class SafeLLMRerank(BaseNodePostprocessor):
             )
             return nodes[: self.fallback_top_n]
         return reranked
+
+
+class FlashRankRerank(BaseNodePostprocessor):
+
+    ranker: Any = None
+    top_n: int = 5
+
+    @classmethod
+    def class_name(cls) -> str:
+        return "FlashRankRerank"
+
+    def _postprocess_nodes(
+        self,
+        nodes: List[NodeWithScore],
+        query_bundle: Optional[QueryBundle] = None,
+    ) -> List[NodeWithScore]:
+        if not nodes or self.ranker is None:
+            return nodes[: self.top_n]
+        query_str = query_bundle.query_str if query_bundle is not None else ""
+        try:
+            from flashrank import RerankRequest
+
+            passages = []
+            for _i, _nws in enumerate(nodes):
+                _node = getattr(_nws, "node", _nws)
+                try:
+                    _text = _node.get_content()
+                except Exception:
+                    _text = str(_node)
+                passages.append({"id": _i, "text": _text})
+            ranked = self.ranker.rerank(
+                RerankRequest(query=query_str, passages=passages)
+            )
+            ordered = []
+            for _r in ranked[: self.top_n]:
+                _nws = nodes[int(_r["id"])]
+                try:
+                    _nws.score = float(_r["score"])
+                except Exception:
+                    pass
+                ordered.append(_nws)
+            return ordered or nodes[: self.top_n]
+        except Exception as e:
+            logger.warning(
+                f"FlashRank rerank failed ({type(e).__name__}: {e}); "
+                f"keeping top-{self.top_n} retrieved order."
+            )
+            return nodes[: self.top_n]
 
 
 class Tools:
@@ -296,10 +345,37 @@ class Tools:
                 "RRF, not cosine); relevance trim below handles narrowing."
             )
 
+        _enable_flashrank = os.getenv("ENABLE_FLASHRANK_RERANK", "false").strip().lower() in (
+            "1", "true", "yes", "on"
+        )
         _enable_llm_rerank = os.getenv("ENABLE_LLM_RERANK", "false").strip().lower() in (
             "1", "true", "yes", "on"
         )
-        if _enable_llm_rerank:
+        if _enable_flashrank:
+            try:
+                from flashrank import Ranker
+
+                _fr_model = os.getenv("FLASHRANK_MODEL", "ms-marco-MiniLM-L-12-v2")
+                _fr_cache = os.getenv("FLASHRANK_CACHE_DIR", "").strip() or None
+                _flash_ranker = (
+                    Ranker(model_name=_fr_model, cache_dir=_fr_cache)
+                    if _fr_cache
+                    else Ranker(model_name=_fr_model)
+                )
+                node_postprocessors.append(
+                    FlashRankRerank(ranker=_flash_ranker, top_n=rerank_top_n)
+                )
+                logger.info(
+                    f"FlashRankRerank enabled (retrieve {top_k} -> rerank {rerank_top_n}, "
+                    f"model={_fr_model}, no LLM call)"
+                )
+            except Exception as e:
+                node_postprocessors.append(KeepTopN(top_n=rerank_top_n))
+                logger.warning(
+                    f"FlashRank unavailable ({type(e).__name__}: {e}); "
+                    f"using deterministic KeepTopN({rerank_top_n})."
+                )
+        elif _enable_llm_rerank:
             try:
                 base_reranker = LLMRerank(
                     llm=self.llm,
@@ -326,29 +402,69 @@ class Tools:
                 f"deterministic, no LLM call, cannot break grounding)"
             )
 
-        # CitationQueryEngine works over any BaseRetriever, so citations behave
-        # exactly as before whether we're on the fused retriever or the plain
-        # vector retriever fallback above.
-        query_engine = CitationQueryEngine(
-            retriever=retriever,
-            llm=self.llm,
-            citation_chunk_size=512,
-            node_postprocessors=node_postprocessors,
+        _tool_description = (
+            "A semantic search tool over ALL uploaded documents. "
+            "Use this tool for ANY question whose answer might exist in an uploaded document — "
+            "regardless of the document type. This includes recipes, diet guides, nutrition info, "
+            "health articles, policies, research papers, manuals, reports, guidelines, contracts, "
+            "personal notes, or any other text content. "
+            "When a user asks about a topic, ingredient, procedure, rule, concept, or description "
+            "of any kind, always check this tool first. "
+            "Do NOT skip this tool just because the question sounds informal or non-technical."
         )
 
-        vector_tool = QueryEngineTool.from_defaults(
-            query_engine=query_engine,
-            name="policy_documents",
-            description=(
-                "A semantic search tool over ALL uploaded documents. "
-                "Use this tool for ANY question whose answer might exist in an uploaded document — "
-                "regardless of the document type. This includes recipes, diet guides, nutrition info, "
-                "health articles, policies, research papers, manuals, reports, guidelines, contracts, "
-                "personal notes, or any other text content. "
-                "When a user asks about a topic, ingredient, procedure, rule, concept, or description "
-                "of any kind, always check this tool first. "
-                "Do NOT skip this tool just because the question sounds informal or non-technical."
+        _enable_citation_synthesis = os.getenv("ENABLE_CITATION_SYNTHESIS", "false").strip().lower() in (
+            "1", "true", "yes", "on"
+        )
+
+        if _enable_citation_synthesis:
+            query_engine = CitationQueryEngine(
+                retriever=retriever,
+                llm=self.llm,
+                citation_chunk_size=512,
+                node_postprocessors=node_postprocessors,
             )
+            vector_tool = QueryEngineTool.from_defaults(
+                query_engine=query_engine,
+                name="policy_documents",
+                description=_tool_description,
+            )
+            logger.info(
+                "policy_documents: CitationQueryEngine synthesis ON "
+                "(LLM writes the cited answer inside the tool)"
+            )
+            return vector_tool
+
+        _postprocessors = node_postprocessors
+
+        def _retrieve_policy_documents(input: str) -> Response:
+            query_bundle = QueryBundle(query_str=input)
+            nodes = retriever.retrieve(query_bundle)
+            for _pp in _postprocessors:
+                nodes = _pp.postprocess_nodes(nodes, query_bundle=query_bundle)
+            blocks = []
+            for _i, _nws in enumerate(nodes, start=1):
+                _node = getattr(_nws, "node", _nws)
+                try:
+                    _text = _node.get_content()
+                except Exception:
+                    _text = str(_node)
+                blocks.append(f"[{_i}] {_text}")
+            response_text = (
+                "\n\n".join(blocks)
+                if blocks
+                else "No relevant information found in the uploaded documents."
+            )
+            return Response(response=response_text, source_nodes=nodes)
+
+        vector_tool = FunctionTool.from_defaults(
+            fn=_retrieve_policy_documents,
+            name="policy_documents",
+            description=_tool_description,
+        )
+        logger.info(
+            "policy_documents: retrieve-only tool "
+            "(no in-tool LLM synthesis; agent writes the single cited answer)"
         )
 
         return vector_tool

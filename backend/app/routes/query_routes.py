@@ -201,10 +201,6 @@ async def query_agent(request: Request,
 
             yield _sse("step", {"id": "retrieve", "label": "Selecting tools & retrieving", "status": "active"})
 
-            # Give the ReAct output parser the raw question so that, if the
-            # model tries to answer a (often compound) question without calling
-            # a tool, the parser's forced-retrieval fallback searches on the
-            # real query — covering every clause — instead of the model's draft.
             try:
                 op = getattr(agent, "output_parser", None)
                 if op is not None and hasattr(op, "set_forced_question"):
@@ -284,9 +280,6 @@ async def query_agent(request: Request,
                 yield _sse("done", {"ok": False})
                 return
 
-            if not streamed_live:
-                yield _sse("step", {"id": "generate", "label": "LLM generating answer", "status": "active"})
-
             raw_answer = result.response.content if result.response else str(result)
 
             guard_block_reason = _extract_sql_guard_block(tool_call_results)
@@ -305,6 +298,24 @@ async def query_agent(request: Request,
                 logger.warning(f"PII redacted from query response: {pii_summaries}")
 
             retrieved_contexts: List[str] = _gather_grounding_contexts(tool_call_results)
+
+            if not tool_call_results or not retrieved_contexts:
+                logger.warning(
+                    f"Ungrounded answer gated (tools={len(tool_call_results)}, "
+                    f"contexts={len(retrieved_contexts)}). Head: {str(answer)[:150]!r}"
+                )
+                answer = (
+                    "I couldn't ground an answer in your uploaded documents, the "
+                    "clinical database, or the biomedical literature for this "
+                    "question. I only answer from retrieved sources — try "
+                    "rephrasing to reference your document content."
+                )
+
+            yield _sse("step", {"id": "generate", "label": "LLM generating answer", "status": "active"})
+            if not streamed_live:
+                for i in range(0, len(answer), 20):
+                    yield _sse("token", {"text": answer[i:i + 20]})
+                    await asyncio.sleep(0.01)
 
             faithfulness_score: Optional[float] = None
             relevance_score: Optional[float] = None
@@ -336,28 +347,6 @@ async def query_agent(request: Request,
             except Exception as ragas_err:
                 logger.error(f"Ragas evaluation failed: {ragas_err}", exc_info=True)
             yield _sse("step", {"id": "evaluate", "label": "Answer quality evaluated", "status": "done"})
-
-            if (
-                not tool_call_results
-                or not retrieved_contexts
-                or (faithfulness_score is not None and faithfulness_score < FAITHFULNESS_MIN)
-            ):
-                logger.warning(
-                    f"Ungrounded answer gated (tools={len(tool_call_results)}, "
-                    f"contexts={len(retrieved_contexts)}, faithfulness={faithfulness_score}). "
-                    f"Head: {str(answer)[:150]!r}"
-                )
-                answer = (
-                    "I couldn't ground an answer in your uploaded documents, the "
-                    "clinical database, or the biomedical literature for this "
-                    "question. I only answer from retrieved sources — try "
-                    "rephrasing to reference your document content."
-                )
-
-            if not streamed_live:
-                for i in range(0, len(answer), 20):
-                    yield _sse("token", {"text": answer[i:i + 20]})
-                    await asyncio.sleep(0.01)
 
             list_of_tools_used: List[str] = _extract_tools_used(tool_call_results)
             sources_used: Optional[str] = _extract_sources_used(tool_call_results)

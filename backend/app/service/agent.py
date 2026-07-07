@@ -8,7 +8,7 @@ from ..service.tools import Tools
 from ..config.config import load_config,logger
 from llama_index.core import VectorStoreIndex
 
-from llama_index.core.agent.workflow import ReActAgent
+from llama_index.core.agent.workflow import ReActAgent, FunctionAgent
 from llama_index.core.agent.react.output_parser import ReActOutputParser
 from llama_index.core.agent.react.types import (
     ActionReasoningStep,
@@ -159,12 +159,7 @@ async def get_agent(index: VectorStoreIndex, llm=None, embed_model=None) -> ReAc
     valid_tool_names.discard(None)
     logger.info(f"Registered tool names for parser: {sorted(valid_tool_names)}")
 
-    agent = ReActAgent(
-        tools=agent_tools,
-        verbose=True,
-        llm=llm,
-        output_parser=LenientReActOutputParser(valid_tools=valid_tool_names),
-        system_prompt="""
+    _system_prompt = """
         You are an intelligent Documents analytics assistant with access to a SQL database, a vector store of documents, and a PubMed/NCBI biomedical literature tool.
 
         TOOL NAMING (mandatory):
@@ -218,7 +213,28 @@ async def get_agent(index: VectorStoreIndex, llm=None, embed_model=None) -> ReAc
         - Protect patient privacy.
         - Provide actionable insights only when grounded in tool output.
         """
+
+    _is_function_calling = bool(
+        getattr(getattr(llm, "metadata", None), "is_function_calling_model", False)
     )
+
+    if _is_function_calling:
+        agent = FunctionAgent(
+            tools=agent_tools,
+            verbose=True,
+            llm=llm,
+            system_prompt=_system_prompt,
+        )
+        logger.info("Agent backend: FunctionAgent (native tool calling)")
+    else:
+        agent = ReActAgent(
+            tools=agent_tools,
+            verbose=True,
+            llm=llm,
+            output_parser=LenientReActOutputParser(valid_tools=valid_tool_names),
+            system_prompt=_system_prompt,
+        )
+        logger.info("Agent backend: ReActAgent (LLM is not function-calling)")
 
     return agent
 
