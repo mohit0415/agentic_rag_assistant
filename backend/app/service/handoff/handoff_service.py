@@ -63,7 +63,11 @@ def evaluate_handoff_trigger(
         return {"trigger": True, "reason": "retrieval returned no grounding context", "priority": "high"}
 
     # 3. Answer not grounded in retrieved context (ragas faithfulness).
-    if faithfulness is not None and faithfulness < HANDOFF_FAITHFULNESS_THRESHOLD:
+    if (
+        faithfulness is not None
+        and faithfulness < HANDOFF_FAITHFULNESS_THRESHOLD
+        and (relevance is None or relevance < HANDOFF_RELEVANCE_THRESHOLD)
+    ):
         return {
             "trigger": True,
             "reason": f"faithfulness {faithfulness} below threshold {HANDOFF_FAITHFULNESS_THRESHOLD}",

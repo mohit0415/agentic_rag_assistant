@@ -102,7 +102,7 @@ def generate_caption(image_path: str, prompt: Optional[str] = None, api_key: Opt
                 ]
             }
         ],
-        max_tokens=300,
+        max_tokens=1500,
     )
     
     caption = response.choices[0].message.content.strip()
