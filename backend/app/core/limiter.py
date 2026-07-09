@@ -7,8 +7,8 @@ from starlette.requests import Request
 
 load_dotenv()
 
-RATE_LIMIT_QUERY: str = os.getenv("RATE_LIMIT_QUERY", "10/minute")
-RATE_LIMIT_UPLOAD: str = os.getenv("RATE_LIMIT_UPLOAD", "5/minute")
+RATE_LIMIT_QUERY: str = os.getenv("RATE_LIMIT_QUERY", "10/day")
+RATE_LIMIT_UPLOAD: str = os.getenv("RATE_LIMIT_UPLOAD", "5/day")
 
 
 SESSION_HEADER = "X-Session-Id"
