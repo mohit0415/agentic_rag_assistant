@@ -10,7 +10,7 @@ from ...config.config import logger
 
 
 HANDOFF_FAITHFULNESS_THRESHOLD = float(os.getenv("HANDOFF_FAITHFULNESS_THRESHOLD", "0.6"))
-HANDOFF_RELEVANCE_THRESHOLD = float(os.getenv("HANDOFF_RELEVANCE_THRESHOLD", "0.5"))
+HANDOFF_RELEVANCE_THRESHOLD = float(os.getenv("HANDOFF_RELEVANCE_THRESHOLD", "0.3"))
 
 SMTP_HOST = os.getenv("SMTP_HOST")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
