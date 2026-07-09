@@ -28,7 +28,30 @@ const StringData = {
     thinkingLabel: "Retrieving {count} chunks · re-ranking...",
     scopeBadge: "{count} docs",
     emptyChatHint: "Upload a document and start asking questions.",
+    demoHeading: "Try a question — each routes the agent to a different tool",
+    demoSubheading: "Watch the pipeline on the right decide which source to use.",
   },
+
+  demoPrompts: [
+    {
+      label: "Structured clinical DB",
+      tool: "clinical_reference_db · SQL",
+      icon: "🗄️",
+      text: "Show me records on drug interactions?",
+    },
+    {
+      label: "Your documents",
+      tool: "policy_documents · vector",
+      icon: "📄",
+      text: "Summarize the main points and key takeaways from my uploaded documents, and cite which document each point comes from.",
+    },
+    {
+      label: "Live literature",
+      tool: "PubMed · MCP",
+      icon: "🔬",
+      text: "Find recent PubMed studies on gabapentin for neuropathic pain and summarize the findings.",
+    },
+  ],
 
   rightPanel: {
     tabSources: "Sources",

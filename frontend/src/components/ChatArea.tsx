@@ -12,7 +12,42 @@ interface ChatAreaProps {
   thinkingLabel?: string;
   onCitationClick: (chunkIndex: number) => void;
   onSourceChipClick: (chunkIndex: number) => void;
+  onSuggestionClick?: (text: string) => void;
 }
+
+const DemoSuggestions: React.FC<{ onPick: (text: string) => void; disabled?: boolean }> = ({
+  onPick,
+  disabled,
+}) => (
+  <div className="flex flex-1 flex-col items-center justify-center gap-5 px-4 text-center animate-fade-in">
+    <div className="flex h-[46px] w-[46px] items-center justify-center rounded-2xl bg-gradient-to-br from-[#22D3EE] to-[#3B82F6] text-[#04121A] shadow-glow-soft">
+      <HeartPulse size={22} strokeWidth={2.2} />
+    </div>
+    <div>
+      <h2 className="text-[15px] font-semibold text-txt-pri">{StringData.chat.demoHeading}</h2>
+      <p className="mt-1 text-[12px] text-txt-mut">{StringData.chat.demoSubheading}</p>
+    </div>
+    <div className="flex w-full max-w-2xl flex-col gap-2.5 sm:flex-row">
+      {StringData.demoPrompts.map((p) => (
+        <button
+          key={p.tool}
+          type="button"
+          disabled={disabled}
+          onClick={() => onPick(p.text)}
+          className="group flex flex-1 flex-col gap-1.5 rounded-2xl border border-line bg-card/60 p-3.5 text-left transition-all duration-150 hover:border-accent/40 hover:bg-card hover:shadow-glow-soft disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
+            <span className="text-[13px]">{p.icon}</span> {p.label}
+          </span>
+          <span className="text-[12.5px] leading-snug text-txt-sec">{p.text}</span>
+          <span className="mt-0.5 inline-flex items-center gap-1 text-[9.5px] font-medium text-txt-mut">
+            <Wrench size={9} /> {p.tool}
+          </span>
+        </button>
+      ))}
+    </div>
+  </div>
+);
 
 const TypingIndicator: React.FC<{ label: string }> = ({ label }) => (
   <div className="flex animate-fade-in gap-3">
@@ -50,6 +85,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   thinkingLabel,
   onCitationClick,
   onSourceChipClick,
+  onSuggestionClick,
 }) => {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -66,6 +102,10 @@ const ChatArea: React.FC<ChatAreaProps> = ({
       className="flex flex-1 flex-col gap-4 overflow-y-auto p-4 sm:p-5"
       aria-label={StringData.aria.chatArea}
     >
+      {!messages.some((m) => m.role === "user") && !isThinking && onSuggestionClick && (
+        <DemoSuggestions onPick={onSuggestionClick} disabled={isThinking} />
+      )}
+
       {messages.map((msg) => {
         if (msg.role === "ai" && msg.streaming && msg.content === "") return null;
 

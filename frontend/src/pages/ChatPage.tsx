@@ -151,6 +151,7 @@ const ChatPage: React.FC = () => {
           isThinking={isThinking}
           onCitationClick={() => {}}
           onSourceChipClick={() => {}}
+          onSuggestionClick={sendQuestion}
         />
         <ChatInput
           docCount={documents.length}
