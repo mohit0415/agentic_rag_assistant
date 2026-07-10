@@ -20,6 +20,9 @@ import { useAuth } from "../auth/AuthContext";
 import { ApiError } from "../utils/network";
 import StringData from "../StringData";
 
+const GEMINI_KEY_REQUIRED =
+  (import.meta.env.VITE_GEMINI_KEY_REQUIRED as string | undefined) === "true";
+
 const Step: React.FC<{ n: number; children: React.ReactNode }> = ({ n, children }) => (
   <li className="flex gap-2.5">
     <span className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-accent/10 text-[10.5px] font-semibold text-accent">
@@ -39,6 +42,44 @@ const GuideLink: React.FC<{ href: string; children: React.ReactNode }> = ({ href
     {children}
     <ExternalLink size={11} />
   </a>
+);
+
+const GeminiKeySteps: React.FC = () => (
+  <ol className="space-y-2">
+    <Step n={1}>
+      <b className="text-txt-pri">Open Google AI Studio</b> — go to{" "}
+      <GuideLink href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</GuideLink>{" "}
+      and <b className="text-txt-pri">sign in with your Google account</b>.
+    </Step>
+    <Step n={2}>
+      <b className="text-txt-pri">Click "Create API key"</b>.
+    </Step>
+    <Step n={3}>
+      <b className="text-txt-pri">Choose "Create API key in new project"</b> — this stays on the{" "}
+      <b className="text-txt-pri">free Tier-1 plan</b> (no billing or card required).
+    </Step>
+    <Step n={4}>
+      <b className="text-txt-pri">Copy the key</b> — it starts with{" "}
+      <code className="text-accent">AIza…</code>.
+    </Step>
+    <Step n={5}>
+      <b className="text-txt-pri">Paste it into the "Gemini API key" field</b> on this page and sign
+      in.
+    </Step>
+  </ol>
+);
+
+const ProviderTransitionNote: React.FC = () => (
+  <div className="flex gap-3 rounded-2xl border border-accent/25 bg-accent/[0.06] p-4 backdrop-blur-md">
+    <Sparkles size={16} className="mt-0.5 flex-shrink-0 text-accent" />
+    <p className="text-[12px] leading-relaxed text-txt-sec">
+      <b className="text-txt-pri">Heads up:</b> we currently run on{" "}
+      <b className="text-txt-pri">Azure OpenAI</b> for the model &amp; embeddings. In about{" "}
+      <b className="text-txt-pri">2 months</b> the app will be{" "}
+      <b className="text-txt-pri">redirected to Gemini</b>, and your own Gemini API key will be used
+      then. {GEMINI_KEY_REQUIRED ? "It is now required to sign in." : "Adding it now is optional."}
+    </p>
+  </div>
 );
 
 const KeySetupGuide: React.FC = () => (
@@ -67,23 +108,31 @@ const KeySetupGuide: React.FC = () => (
       </div>
 
       <div className="rounded-2xl border border-line bg-card/70 p-5 shadow-card backdrop-blur-md">
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-3 flex items-center justify-between">
           <span className="flex items-center gap-2 text-[13px] font-semibold text-txt-pri">
             <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#22D3EE]/10 text-accent">
               <KeyRound size={14} />
             </span>
-            Gemini API key
+            Gemini API key <span className="text-txt-mut">· free Tier-1 plan</span>
           </span>
-          <span className="rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-success">
-            Configured on server
+          <span
+            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+              GEMINI_KEY_REQUIRED
+                ? "bg-danger/10 text-[#FCA5A5]"
+                : "bg-white/[0.06] text-txt-mut"
+            }`}
+          >
+            {GEMINI_KEY_REQUIRED ? "Required" : "Optional for now"}
           </span>
         </div>
-        <p className="text-[12.5px] leading-relaxed text-txt-sec">
-          The LLM + embedding key is managed by the server administrator (set via{" "}
-          <code className="text-accent">GEMINI_API_KEY</code> in the backend environment). You
-          don't need to provide it here.
+        <p className="mb-3 text-[12.5px] leading-relaxed text-txt-sec">
+          Bring your <b className="text-txt-pri">own free Gemini API key</b> — the server does not
+          provide one for you. Follow these steps:
         </p>
+        <GeminiKeySteps />
       </div>
+
+      <ProviderTransitionNote />
 
       <div className="rounded-2xl border border-line bg-card/70 p-5 shadow-card backdrop-blur-md">
         <div className="mb-3 flex items-center justify-between">
@@ -137,6 +186,7 @@ const LoginPage: React.FC = () => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [llamaparseApiKey, setLlamaparseApiKey] = useState("");
+  const [geminiApiKey, setGeminiApiKey] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -154,8 +204,14 @@ const LoginPage: React.FC = () => {
     setError(null);
     setSubmitting(true);
     try {
+      if (GEMINI_KEY_REQUIRED && !geminiApiKey.trim()) {
+        setError("A Gemini API key is required to sign in. Follow the steps to create a free one.");
+        setSubmitting(false);
+        return;
+      }
       await login(username.trim(), password, {
         llamaparseApiKey: llamaparseApiKey.trim() || undefined,
+        geminiApiKey: geminiApiKey.trim() || undefined,
       });
       navigate(from, { replace: true });
     } catch (err) {
@@ -256,6 +312,43 @@ const LoginPage: React.FC = () => {
                 {showKeys ? "Hide" : "Show"}
               </button>
             </div>
+
+            <label className="ml-label mb-1.5 block">
+              Gemini API key
+              <span className="ml-1 font-normal normal-case tracking-normal text-txt-mut/70">
+                {GEMINI_KEY_REQUIRED ? "· required" : "· free Tier-1 · optional for now"}
+              </span>
+            </label>
+            <input
+              type={showKeys ? "text" : "password"}
+              value={geminiApiKey}
+              onChange={(e) => setGeminiApiKey(e.target.value)}
+              autoComplete="off"
+              placeholder="AIza…"
+              required={GEMINI_KEY_REQUIRED}
+              className="ml-input mb-1"
+            />
+            <p className="mb-4 text-[11px] leading-relaxed text-txt-mut/80">
+              Bring your own free key from{" "}
+              <a
+                href="https://aistudio.google.com/apikey"
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent hover:underline"
+              >
+                aistudio.google.com/apikey
+              </a>
+              . We run on Azure OpenAI today; the app switches to Gemini in ~2 months.
+            </p>
+
+            <details className="mb-4 rounded-xl border border-line bg-white/[0.03] p-3 lg:hidden">
+              <summary className="cursor-pointer list-none text-[12px] font-semibold text-txt-pri">
+                How to get a free Gemini key →
+              </summary>
+              <div className="mt-3">
+                <GeminiKeySteps />
+              </div>
+            </details>
 
             <label className="ml-label mb-1.5 block">
               LlamaParse API key

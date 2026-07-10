@@ -22,6 +22,10 @@ class LoginRequest(BaseModel):
     llamaparse_api_key: Optional[str] = Field(
         default=None, description="LlamaParse API key (used for multimodal table/diagram parsing)"
     )
+    gemini_api_key: Optional[str] = Field(
+        default=None,
+        description="User-provided Gemini API key (used for LLM + embeddings when USE_GEMINI is on)",
+    )
 
     class Config:
         json_schema_extra = {"example": {"username": "admin", "password": "admin123"}}
@@ -70,6 +74,8 @@ async def login(request: LoginRequest):
     extra_claims = {}
     if request.llamaparse_api_key:
         extra_claims["llamaparse_api_key"] = request.llamaparse_api_key
+    if request.gemini_api_key:
+        extra_claims["gemini_api_key"] = request.gemini_api_key
 
     token = create_access_token(
         subject=request.username,

@@ -28,6 +28,7 @@ export interface ModelInfo {
 
 export interface LoginExtras {
   llamaparseApiKey?: string;
+  geminiApiKey?: string;
 }
 
 interface AuthContextValue {
@@ -72,6 +73,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             username,
             password,
             llamaparse_api_key: extras?.llamaparseApiKey?.trim() || undefined,
+            gemini_api_key: extras?.geminiApiKey?.trim() || undefined,
           }),
         });
       } catch (e) {

@@ -146,8 +146,9 @@ def build_models_from_claims(
     config = config or load_config()
     claims = claims or {}
     if config.get('use_gemini'):
-        llm = initialize_llm(config)
-        embed = initialize_embeddings(config)
+        user_gemini_key = claims.get('gemini_api_key') or config.get('gemini_api_key')
+        llm = initialize_llm(config, gemini_api_key=user_gemini_key)
+        embed = initialize_embeddings(config, gemini_api_key=user_gemini_key)
         return llm, embed
 
     try:
