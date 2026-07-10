@@ -43,6 +43,12 @@ const StringData = {
       label: "Your documents",
       tool: "policy_documents · vector",
       icon: "📄",
+      text:"In the TechNova Q1 2026 report, what are the five components shown in the platform architecture diagram?"
+    },
+    {
+      label: "Your documents",
+      tool: "policy_documents · vector",
+      icon: "📄",
       text: "Summarize the main points and key takeaways from my uploaded documents, and cite which document each point comes from.",
     },
     {
