@@ -55,16 +55,15 @@ const GeminiKeySteps: React.FC = () => (
       <b className="text-txt-pri">Click "Create API key"</b>.
     </Step>
     <Step n={3}>
-      <b className="text-txt-pri">Choose "Create API key in new project"</b> — this stays on the{" "}
-      <b className="text-txt-pri">free Tier-1 plan</b> (no billing or card required).
+      <b className="text-txt-pri">Enable billing &amp; upgrade to a paid Tier 1 / Tier 2 plan</b> —
+      gives much higher rate limits so the project runs smoothly (the free tier throttles quickly).
     </Step>
     <Step n={4}>
       <b className="text-txt-pri">Copy the key</b> — it starts with{" "}
       <code className="text-accent">AIza…</code>.
     </Step>
     <Step n={5}>
-      <b className="text-txt-pri">Paste it into the "Gemini API key" field</b> on this page and sign
-      in.
+      <b className="text-txt-pri">Paste it into the "Gemini API key" field</b> and sign in.
     </Step>
   </ol>
 );
@@ -93,13 +92,13 @@ const KeySetupGuide: React.FC = () => (
       style={{ background: "radial-gradient(circle, #3B82F6 0%, transparent 70%)" }}
     />
 
-    <div className="relative mx-auto w-full max-w-[520px] space-y-5 px-10 py-12">
+    <div className="relative mx-auto w-full max-w-[760px] space-y-3.5 px-8 py-8">
       <div>
-        <div className="mb-3 inline-flex items-center gap-1.5 rounded-full border border-line bg-white/[0.04] px-3 py-1 text-[11px] font-medium text-txt-sec backdrop-blur">
+        <div className="mb-2.5 inline-flex items-center gap-1.5 rounded-full border border-line bg-white/[0.04] px-3 py-1 text-[11px] font-medium text-txt-sec backdrop-blur">
           <Sparkles size={12} className="text-accent" />
           Before you sign in
         </div>
-        <h2 className="font-display text-[24px] font-semibold leading-snug tracking-tight text-txt-pri">
+        <h2 className="font-display text-[22px] font-semibold leading-snug tracking-tight text-txt-pri">
           Set up your{" "}
           <span className="bg-gradient-to-r from-[#22D3EE] to-[#3B82F6] bg-clip-text text-transparent">
             API keys
@@ -107,71 +106,77 @@ const KeySetupGuide: React.FC = () => (
         </h2>
       </div>
 
-      <div className="rounded-2xl border border-line bg-card/70 p-5 shadow-card backdrop-blur-md">
-        <div className="mb-3 flex items-center justify-between">
-          <span className="flex items-center gap-2 text-[13px] font-semibold text-txt-pri">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#22D3EE]/10 text-accent">
-              <KeyRound size={14} />
+      <div className="grid grid-cols-2 gap-3.5">
+        <div className="rounded-2xl border border-line bg-card/70 p-4 shadow-card backdrop-blur-md">
+          <div className="mb-2.5 flex items-center justify-between gap-2">
+            <span className="flex items-center gap-2 text-[12.5px] font-semibold text-txt-pri">
+              <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-[#22D3EE]/10 text-accent">
+                <KeyRound size={14} />
+              </span>
+              Gemini API key
             </span>
-            Gemini API key <span className="text-txt-mut">· free Tier-1 plan</span>
-          </span>
-          <span
-            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-              GEMINI_KEY_REQUIRED
-                ? "bg-danger/10 text-[#FCA5A5]"
-                : "bg-white/[0.06] text-txt-mut"
-            }`}
-          >
-            {GEMINI_KEY_REQUIRED ? "Required" : "Optional for now"}
-          </span>
+            <span
+              className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide ${
+                GEMINI_KEY_REQUIRED
+                  ? "bg-danger/10 text-[#FCA5A5]"
+                  : "bg-white/[0.06] text-txt-mut"
+              }`}
+            >
+              {GEMINI_KEY_REQUIRED ? "Required" : "Optional"}
+            </span>
+          </div>
+          <p className="mb-2.5 text-[12px] leading-relaxed text-txt-sec">
+            Bring your <b className="text-txt-pri">own Gemini API key</b> on a{" "}
+            <b className="text-txt-pri">paid Tier 1 / Tier 2 plan</b>:
+          </p>
+          <GeminiKeySteps />
         </div>
-        <p className="mb-3 text-[12.5px] leading-relaxed text-txt-sec">
-          Bring your <b className="text-txt-pri">own free Gemini API key</b> — the server does not
-          provide one for you. Follow these steps:
-        </p>
-        <GeminiKeySteps />
+
+        <div className="rounded-2xl border border-line bg-card/70 p-4 shadow-card backdrop-blur-md">
+          <div className="mb-2.5 flex items-center gap-2">
+            <span className="flex items-center gap-2 text-[12.5px] font-semibold text-txt-pri">
+              <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-[#8B5CF6]/10 text-[#A78BFA]">
+                <Table2 size={14} />
+              </span>
+              LlamaParse key
+            </span>
+          </div>
+          <p className="mb-2.5 text-[12px] leading-relaxed text-txt-sec">
+            <code className="text-accent">LLAMA_CLOUD_API_KEY</code> — only for docs with tables or
+            images:
+          </p>
+          <ol className="space-y-2">
+            <Step n={1}>
+              Go to <GuideLink href="https://cloud.llamaindex.ai">cloud.llamaindex.ai</GuideLink> and
+              sign in (Google / GitHub / email).
+            </Step>
+            <Step n={2}>
+              In the left menu open <b className="text-txt-pri">API Keys</b> →{" "}
+              <b className="text-txt-pri">Generate New Key</b>.
+            </Step>
+            <Step n={3}>
+              Copy the key (starts with <code className="text-accent">llx-…</code>) and paste it into
+              the form.
+            </Step>
+          </ol>
+        </div>
       </div>
 
       <ProviderTransitionNote />
 
-      <div className="rounded-2xl border border-line bg-card/70 p-5 shadow-card backdrop-blur-md">
-        <div className="mb-3 flex items-center justify-between">
-          <span className="flex items-center gap-2 text-[13px] font-semibold text-txt-pri">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#8B5CF6]/10 text-[#A78BFA]">
-              <Table2 size={14} />
-            </span>
-            LlamaParse key (LLAMA_CLOUD_API_KEY)
-          </span>
-        </div>
-        <ol className="space-y-2">
-          <Step n={1}>
-            Go to <GuideLink href="https://cloud.llamaindex.ai">cloud.llamaindex.ai</GuideLink> and
-            sign in (Google / GitHub / email).
-          </Step>
-          <Step n={2}>
-            In the left menu open <b className="text-txt-pri">API Keys</b> →{" "}
-            <b className="text-txt-pri">Generate New Key</b>.
-          </Step>
-          <Step n={3}>
-            Copy the key (starts with <code className="text-accent">llx-…</code>) and paste it into
-            the form.
-          </Step>
-        </ol>
-      </div>
-
-      <div className="flex gap-3 rounded-2xl border border-warning/25 bg-warning/[0.06] p-4 backdrop-blur-md">
+      <div className="flex gap-3 rounded-2xl border border-warning/25 bg-warning/[0.06] p-3.5 backdrop-blur-md">
         <AlertTriangle size={16} className="mt-0.5 flex-shrink-0 text-[#FBBF24]" />
         <p className="text-[12px] leading-relaxed text-txt-sec">
-          <b className="text-txt-pri">Multimodal documents:</b> if an uploaded document contains{" "}
+          <b className="text-txt-pri">Multimodal documents:</b> uploads containing{" "}
           <span className="inline-flex items-center gap-1 text-txt-pri">
             <Table2 size={11} /> tables
           </span>{" "}
           or{" "}
           <span className="inline-flex items-center gap-1 text-txt-pri">
             <ImageIcon size={11} /> images
-          </span>
-          , it is parsed with LlamaParse — those uploads <b className="text-txt-pri">fail without
-          a LlamaParse key</b>. Plain-text documents index fine without it.
+          </span>{" "}
+          are parsed with LlamaParse and <b className="text-txt-pri">fail without a LlamaParse
+          key</b>. Plain-text docs index fine without it.
         </p>
       </div>
     </div>
@@ -316,7 +321,7 @@ const LoginPage: React.FC = () => {
             <label className="ml-label mb-1.5 block">
               Gemini API key
               <span className="ml-1 font-normal normal-case tracking-normal text-txt-mut/70">
-                {GEMINI_KEY_REQUIRED ? "· required" : "· free Tier-1 · optional for now"}
+                {GEMINI_KEY_REQUIRED ? "· required" : "· Tier 1 / Tier 2 · optional for now"}
               </span>
             </label>
             <input
@@ -329,7 +334,7 @@ const LoginPage: React.FC = () => {
               className="ml-input mb-1"
             />
             <p className="mb-4 text-[11px] leading-relaxed text-txt-mut/80">
-              Bring your own free key from{" "}
+              Bring your own key (paid Tier 1 / Tier 2 recommended) from{" "}
               <a
                 href="https://aistudio.google.com/apikey"
                 target="_blank"
