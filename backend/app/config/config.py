@@ -114,6 +114,8 @@ def load_config() -> Dict[str, Any]:
         'azure_api_key': os.getenv('AZURE_OPENAI_API_KEY'),
         'azure_embedding_deployment': os.getenv('AZURE_OPENAI_EMBEDDING_DEPLOYMENT'),
         'azure_llm_deployment': os.getenv('AZURE_OPENAI_LLM_DEPLOYMENT'),
+        'azure_llm_model': os.getenv('AZURE_OPENAI_LLM_MODEL', 'gpt-4o'),
+        'azure_embedding_model': os.getenv('AZURE_OPENAI_EMBEDDING_MODEL', 'text-embedding-3-large'),
         'api_version': os.getenv('AZURE_OPENAI_API_VERSION', '2024-02-01'),
         'table_name': os.getenv('TABLE_NAME', 'smart_auto_advisor'),
         'top_k': int(os.getenv('TOP_K', '5')),

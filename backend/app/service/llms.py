@@ -216,12 +216,12 @@ def build_evaluator_from_claims(
         api_version=config.get('api_version'),
     )
     evaluator_llm = llm_factory(
-        config.get('azure_llm_deployment'),
+        config.get('azure_llm_model', 'gpt-4o'),
         client=client,
     )
     evaluator_embeddings = embedding_factory(
         "openai",
-        model=config.get('azure_embedding_deployment'),
+        model=config.get('azure_embedding_model', 'text-embedding-3-large'),
         client=client,
     )
     _azure_evaluator_cache = (evaluator_llm, evaluator_embeddings)
