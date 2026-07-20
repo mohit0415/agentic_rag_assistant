@@ -8,7 +8,7 @@ from ..config.config import load_config, logger
 from .rate_limit import get_gemini_http_clients
 
 
-EMBED_DIM = 3072
+EMBED_DIM = 1536
 
 _OPENAI_LIKE_INSTALL_HINT = (
     "Gemini mode needs the OpenAI-compatible wrappers. Install them in the "
